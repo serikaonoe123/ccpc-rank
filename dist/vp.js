@@ -1,5 +1,6 @@
-import {compute} from './engine.js';
+import {compute,compareScores} from './engine.js';
 import {validateMedals} from './medals.js';
+import {mapSRKVerdict} from './srk.js';
 const allowed=['AC','WA','TLE','RE','MLE','OLE','PE','CE'];
 export function createVP(contest,name,school,now=Date.now()){
  if(!Array.isArray(contest.submissions))throw Error('此赛事只有最终快照，缺少提交时间，不能进行 VP');
@@ -26,22 +27,24 @@ export function recordVP(session,contest,problemId,verdict,now=Date.now()){
 }
 export function virtualRow(session,contest,rules,now=Date.now()){
  const id=`vp:${session.id}`;
- const c={...contest,teams:[{id,name:session.name,school:session.school}],submissions:session.submissions.map(s=>({...s,teamId:id}))};
+ const c={...contest,teams:[{id,name:session.name,school:session.school}],submissions:session.submissions.map(s=>({...s,teamId:id,...(rules.srkNoPenaltyResults?{verdict:mapSRKVerdict(s.verdict==='RE'&&rules.srkNoPenaltyResults.includes('RTE')?'RTE':s.verdict,rules.srkNoPenaltyResults)}:{})}))};
  const row=compute(c,elapsedMinutes(session,contest.duration,now),rules,{final:true}).rows[0];
  return {...row,virtual:true,unofficial:true};
 }
 export function mergeVirtual(state,session,contest,rules,now=Date.now()){
  const row=virtualRow(session,contest,rules,now);
- row.virtualRank=1+state.rows.filter(r=>!r.unofficial&&(r.solved>row.solved||(r.solved===row.solved&&r.penalty<row.penalty))).length;
+ row.virtualRank=1+state.rows.filter(r=>!r.unofficial&&compareScores(r,row)<0).length;
+ row.virtualPosition=1+state.rows.filter(r=>!r.unofficial&&compareScores(r,row)<=0).length;
  row.rank=row.virtualRank;
- return {...state,rows:[...state.rows,row].sort((a,b)=>b.solved-a.solved||a.penalty-b.penalty||(a.virtual?1:0)-(b.virtual?1:0)||a.name.localeCompare(b.name,'zh-CN'))};
+ return {...state,rows:[...state.rows,row].sort((a,b)=>compareScores(a,b)||(a.virtual?1:0)-(b.virtual?1:0)||(Number.isInteger(a.sourceIndex)&&Number.isInteger(b.sourceIndex)?a.sourceIndex-b.sourceIndex:a.name.localeCompare(b.name,'zh-CN')))};
 }
 export function restoreVP(raw,contest){
  if(!raw||!contest||!Array.isArray(contest.submissions)||typeof raw.id!=='string'||!['running','paused','finished'].includes(raw.status))return null;
  if(!Number.isFinite(raw.elapsedMs)||raw.elapsedMs<0||raw.elapsedMs>contest.duration*60000)return null;
  if(raw.status==='running'&&!Number.isFinite(raw.resumedAt))return null;
  if(!Array.isArray(raw.submissions)||raw.submissions.some(s=>!contest.problems.some(p=>p.id===s.problemId)||!allowed.includes(s.verdict)||!Number.isFinite(s.time)||s.time<0||s.time>=contest.duration))return null;
- if(raw.rules&&(!['penalty','threshold','percent','freeze'].every(k=>Number.isFinite(raw.rules[k])&&raw.rules[k]>=0)||raw.rules.threshold<1||raw.rules.percent<=0||raw.rules.percent>100||raw.rules.freeze<1))return null;
+ if(raw.rules&&(!['penalty','threshold','percent','freeze'].every(k=>Number.isFinite(raw.rules[k])&&raw.rules[k]>=0)||raw.rules.threshold<1||raw.rules.percent<=0||raw.rules.percent>100))return null;
  if(raw.medals){try{validateMedals(raw.medals);}catch{return null;}}
+ if(raw.medalPolicy&&(!Array.isArray(raw.medalPolicy.count)||raw.medalPolicy.count.length!==3||raw.medalPolicy.count.some(n=>!Number.isInteger(n)||n<0)))return null;
  return {...raw,name:String(raw.name||'我的 VP 队伍').slice(0,80),school:String(raw.school||'我的学校').slice(0,80)};
 }

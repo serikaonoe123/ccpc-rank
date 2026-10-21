@@ -10,14 +10,16 @@ export function medalLimits(count,config=DEFAULT_MEDALS){
  return {gold:cutoff(config.gold),silver:cutoff(config.gold+config.silver),bronze:cutoff(config.gold+config.silver+config.bronze)};
 }
 export function medalFor(rank,solved,limits){if(solved<=0||typeof rank!=='number')return null;return rank<=limits.gold?'gold':rank<=limits.silver?'silver':rank<=limits.bronze?'bronze':null;}
-export function awardMedals(rows,config=DEFAULT_MEDALS){
- const official=rows.filter(r=>!r.unofficial&&!r.virtual);const limits=medalLimits(official.length,config);
- const awarded=rows.map(r=>({...r,medal:r.virtual?medalFor(r.virtualRank,r.solved,limits):r.unofficial?null:medalFor(r.rank,r.solved,limits)}));
+export function awardMedals(rows,config=DEFAULT_MEDALS,policy=null){
+ const official=rows.filter(r=>!r.unofficial&&!r.virtual);let limits=medalLimits(official.length,config);
+ if(policy){if(!Array.isArray(policy.count)||policy.count.length!==3||policy.count.some(n=>!Number.isInteger(n)||n<0))throw Error('原始奖牌名额无效');const [g,s,b]=policy.count;limits={gold:Math.min(official.length,g),silver:Math.min(official.length,g+s),bronze:Math.min(official.length,g+s+b)};}
+ let position=0;
+ const awarded=rows.map(r=>{if(!r.unofficial&&!r.virtual)position++;const rank=r.virtual?(policy?.noTied?r.virtualPosition:r.virtualRank):policy?.noTied?position:r.rank;return {...r,medal:r.unofficial&&!r.virtual?null:medalFor(rank,r.solved,limits)};});
  const counts={gold:0,silver:0,bronze:0};for(const r of awarded)if(!r.virtual&&r.medal)counts[r.medal]++;
- return {rows:awarded,counts,limits,eligible:official.length};
+ return {rows:awarded,counts,limits,eligible:official.length,medalPolicy:policy};
 }
 export function schoolStandings(rows){
  const seen=new Set(),result=[];let last=null,rank=0;
- for(const r of rows){if(r.unofficial||r.virtual||seen.has(r.school))continue;seen.add(r.school);if(!last||r.solved!==last.solved||r.penalty!==last.penalty)rank=result.length+1;result.push({...r,rank});last=r;}
+ for(const r of rows){if(r.unofficial||r.virtual||seen.has(r.school))continue;seen.add(r.school);if(!last||r.solved!==last.solved||(r.rankingPenalty??r.penalty)!==(last.rankingPenalty??last.penalty))rank=result.length+1;result.push({...r,rank});last=r;}
  return result;
 }
